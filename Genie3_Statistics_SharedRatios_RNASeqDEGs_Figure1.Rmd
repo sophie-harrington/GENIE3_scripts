@@ -1,0 +1,164 @@
+---
+title: "Random TF to Pearce et al KO data"
+author: "Sophie Harrington"
+date: "19 March 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(BSDA) ##for sign test
+```
+
+Compare overlap between random TFs downstream genes and the Pearce TILLING KO RNASeq data
+
+
+```{r download data}
+
+##GENIE3 data is available at: https://doi.ipk-gatersleben.de/DOI/53148abd-26a1-4ede-802b-c2635af6a725/ef7a50bf-54bb-4041-b922-4e60af47dd14/0/1847940088 
+setwd("Z:/Lab Organisation/Resources/Transcriptome_networks/for_multiple_networks/")
+load("top_1_million_genie3.Rda")
+
+##get the TFs from the genie3 list
+TF <- as.data.frame(distinct(link.list, from.gene))
+TF <- TF[,"from.gene"]
+
+##only keep genes not in D genome
+TF <- grep("D01G", TF, value=TRUE, invert=TRUE)
+
+##DEG output is available at XXXX
+
+##get RNAseq output from NAM-A1 single mutants
+NAMA1_vsWT_12DAANF <- read.csv("Y://Sophie/Networks/Genie3_NAMcomparison/Anna_RNAseqoutput/12DAA_gpcA1_ref_WT_NOFILTERING.txt", sep=" ", header=TRUE)
+NAMA1_vsWT_22DAA <- read.csv("Y://Sophie/Networks/Genie3_NAMcomparison/Anna_RNAseqoutput/22DAA_gpcA1_ref_WT.txt", sep=" ", header=TRUE)
+
+
+
+
+##remove transcript ids from the RNA data
+NAMA1_vsWT_12DAANF <- separate(NAMA1_vsWT_12DAANF, target_id, c("target_id","transcript"), sep="\\.")
+NAMA1_vsWT_12DAANF$name <- c("NAMA1_vsWT_12DAANF")
+NAMA1_vsWT_22DAA <- separate(NAMA1_vsWT_22DAA, target_id, c("target_id","transcript"), sep="\\.")
+NAMA1_vsWT_22DAA$name <- c("NAMA1_vsWT_22DAA")
+
+
+list_RNA <- list(NAMA1_vsWT_12DAANF,NAMA1_vsWT_22DAA)
+
+
+```
+
+Iterate through all of the transcription factors in the A/B genomes in the genie3 list and compare against each of the RNAseq datasets.
+
+```{r iterate through the samples, warning=FALSE}
+##want to carry out 1000 iterations of the following:
+## 1)Randomly select 2 TFs from the list 
+## 2)Extract all downstream genes from genie3 database for each TF
+## 3)Determine how many genes are in common
+## 4)Store this value 
+##
+## repeat this 1000 times, then plot the resulting distribution.
+
+
+##create a matrix with all of the TFs and all of the RNA samples
+TF_RNAdatasets <- expand.grid(TF,list_RNA)
+##add column with the name of the RNA list
+
+
+
+genie3_KO_comparison <- function(RNA, gene){
+  ##randomly select 1 TF
+  ##get all downstream genes
+  gene1 <- link.list %>% filter(from.gene==gene)
+  
+  ##remove the 01G for 02G
+  gene1$to.gene <- gsub("01G", "02G", gene1$to.gene)
+  
+  ##remove all D genome genes
+  gene1 <- filter(gene1, !grepl("D02G", to.gene))
+  
+  ##get number of shared genes8
+  shared <- length(intersect(gene1[,"to.gene"], RNA$target_id))
+  num_gene1 <- nrow(gene1)
+  num_gene2 <- nrow(RNA)
+  
+  ##get ratio
+  if(num_gene1 < num_gene2 || num_gene1 == num_gene2){
+    ratio <- shared/num_gene1
+  } else if(num_gene2 < num_gene1){
+    ratio <- shared/num_gene2
+  }
+  return(data.frame("RNA_Dataset"=RNA$name[1],"Genie3_Gene"=gene,"Ratio"=ratio, "RNA-Seq genes"=num_gene2,"Genie3 DS Genes"=num_gene1, "Number shared"=shared))
+}
+
+output_rel <- mapply(genie3_KO_comparison, RNA=TF_RNAdatasets[,2], gene=TF_RNAdatasets[,1], SIMPLIFY = FALSE)
+
+output_rel <- bind_rows(output_rel)
+
+write.csv(output_rel, "Y://Sophie/Networks/Genie3_NAMcomparison/linklist_Genie3_NAMSharedDist.csv")
+
+
+```
+
+Now plot the distribution of the ratios, and include the intercept lines for the different NAM-A1 cases; This is Figure 1B.
+
+```{r pretty graph}
+output_rel <- read.csv("Y://Sophie/Networks/Genie3_NAMcomparison/linklist_Genie3_NAMSharedDist.csv")
+
+##subset output_rel
+output_12_22 <- subset(output_rel, RNA_Dataset %in% c("NAMA1_vsWT_12DAANF","NAMA1_vsWT_22DAA"))
+
+plot.labels <- c("12 DAA","22 DAA")
+names(plot.labels) <- c("NAMA1_vsWT_12DAANF","NAMA1_vsWT_22DAA")
+
+##include the intercept lines for the NAM-A1 overlap with each RNA-Seq dataset.
+
+annotation_df <- data.frame(xlab = c(12/79, 0.12), x1 = c(12/79, 4/79), ylab=c(30,50), y1 = c(25,40), y2=c(0,0), lab=c("12/79","4/79"), RNA_Dataset=c("NAMA1_vsWT_12DAANF","NAMA1_vsWT_22DAA"))
+
+plot_homoeolog <- ggplot(output_12_22, aes(x=Ratio)) + geom_density(fill="darkorchid3", alpha=0.7) + xlim(0,1) + ylab("Density") +   xlab("Ratio") + theme(axis.title = element_text(size=rel(1))) + facet_wrap(~RNA_Dataset, ncol=1, labeller=labeller(RNA_Dataset=plot.labels), scales="free") + theme_minimal() + geom_text(data=annotation_df, aes(x = xlab, y =ylab, label=lab), size=3) + geom_segment(data=annotation_df, aes(x=x1, xend=x1, y=y1, yend=y2), colour="black")
+
+
+plot_homoeolog
+
+svg(filename = "Z://Sophie/Manuscripts/Genie3/DraftFigures/PearceRandomDist.svg",width=2, height=4)
+plot_homoeolog
+dev.off()
+
+```
+
+Do the sign test for stats:
+
+```{r sign test}
+
+print("Shared genes with NAM-A1")
+print("12DAA nama1 vs WT")
+output_rel %>% filter(RNA_Dataset %in% c("NAMA1_vsWT_12DAANF")) %>% SIGN.test(.$Ratio, md=(12/79), alternative="less", conf.level = 0.95, data=.)
+print("22DAA nama1 vs WT")
+output_rel %>% filter(RNA_Dataset %in% c("NAMA1_vsWT_22DAA")) %>% SIGN.test(.$Ratio, md=(4/79), alternative="less", conf.level = 0.95, data=.)
+
+```
+
+Can see that all of the NAM-A1 examples are significantly higher than the predicted median of the distribution for the relative comparisons. 
+What are the other genes that have high similarity with the Genie3 network?
+
+```{r overlap}
+
+##get the genes that have high ratios in common
+NAMA1_12DAA_higherratio <- output_rel %>% filter(RNA_Dataset %in% c("NAMA1_vsWT_12DAANF")) %>% filter(Ratio > (12/79))
+
+NAMA1_22DAA_higherratio <- output_rel %>% filter(RNA_Dataset %in% c("NAMA1_vsWT_22DAA")) %>% filter(Ratio > (4/79))
+
+higher_ratios <- rbind(NAMA1_12DAA_higherratio, NAMA1_22DAA_higherratio)
+
+unique_genes <- unique(as.character(higher_ratios$Genie3_Gene)) ##20 genes in total
+
+as.data.frame(higher_ratios)
+
+write.csv(as.data.frame(unique_genes),"Y://Sophie/Networks/Genie3_NAMcomparison/HigherRatioGenie3TFs.csv")
+
+write.csv(higher_ratios,"Y://Sophie/Networks/Genie3_NAMcomparison/HigherRatioGenie3TFs_fulltable.csv")
+
+```
+

@@ -1,0 +1,232 @@
+---
+title: "Genie3 TF Enrichment"
+author: "Sophie Harrington"
+date: "5 March 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+Here we have the analysis of the Genie3 Network, derived from Ramirez-Gonzalez et al. 2018 (Science). This network uses a random-forest approach to take RNA-Seq data and predict downstream targets of transcription factors.
+
+In the following sections I will characterise the likelihood of random TFs sharing overlapping downstream targets.
+
+```{r prepare files, include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(grid)
+library(gridExtra)
+
+##GENIE3 data is available at: https://doi.ipk-gatersleben.de/DOI/53148abd-26a1-4ede-802b-c2635af6a725/ef7a50bf-54bb-4041-b922-4e60af47dd14/0/1847940088 
+## this is the "targetmatrix.Rda"; it loads as "link.list"
+load("Z:/Lab Organisation/Resources/Transcriptome_networks/for_multiple_networks/top_1_million_genie3.Rda")
+
+
+##get the TFs from the genie3 list
+TF <- as.data.frame(distinct(link.list, from.gene))
+TF <- TF[,"from.gene"]
+
+
+```
+
+We want to carry out 1000 iterations of the following:
+ 1)Randomly select 2 TFs from the list 
+ 2)Extract all downstream genes from genie3 database for each TF
+ 3)Determine how many genes are in common, relative to the smallest number of downstream genes
+ 4)Store this value 
+
+Repeat this 1000 times, then plot the resulting distribution.
+
+```{r pressure, echo=TRUE}
+output_rel <- as.data.frame(replicate(1000, {
+  pair <- sample(TF,2,replace=FALSE)
+  
+  ##get all downstream genes
+  gene1 <- link.list %>% filter(from.gene==pair[1])
+  gene2 <- link.list %>% filter(from.gene==pair[2])
+  
+  ##get number of downstream genes
+  num_gene1 <- nrow(gene1)
+  num_gene2 <- nrow(gene2)
+  
+  ##get number of shared genes8
+  shared <- length(intersect(gene1[,"to.gene"], gene2[,"to.gene"]))
+  
+  ##get ratio
+  if(num_gene1 < num_gene2 || num_gene1 == num_gene2){
+    ratio <- shared/num_gene1
+  } else if(num_gene2 < num_gene1){
+    ratio <- shared/num_gene2
+  }
+  return(list("Gene1"=pair[1],"DS_Gene1"=num_gene1,"Gene2"=pair[2],"DS_Gene2"=num_gene2,"Ratio"=ratio))
+}))
+output_rel <- as.data.frame(output_rel)
+output_test <- matrix(output_rel)
+output_test <- bind_rows(output_test)
+
+
+##store the random output to use in future
+write.csv(output_test, "Y://Sophie/Networks/Genie3_Statistics_R/Random_1000_genes_output.csv")
+
+summary(output$Ratio)
+
+```
+
+```{r plot the distribution, fig.cap="Distribution of shared downstream genes between random TFs"}
+
+plot_allTFs <- ggplot(output, aes(x=output$Ratio)) + geom_density(color="darkorchid3", fill="darkorchid3", alpha=0.5)   + xlim(0,1) + ylab("Density") + xlab("Ratio of Shared Genes to Downstream Genes")
+
+plot_allTFs
+
+```
+
+
+Note that the distribution here is highly skewed towards the left. This is the distribution presented in Figure 3A.
+
+We can now compare this to plots of all the different TF families present in the dataset:
+
+```{r get all the TFs and run for all TF families}
+##the list of all TFs in the RefSeqv1.0 annotation is available at https://opendata.earlham.ac.uk/wheat/under_license/toronto/Ramirez-Gonzalez_etal_2018-06025-Transcriptome-Landscape/data/data_tables/transcription_factors_to_use_high_confidence.csv
+
+TF_list <- read.csv("Z:/Lab Organisation/Resources/Transcriptome_networks/for_multiple_networks/TF_in_refseqv1.0.csv", header = TRUE)
+
+##get the list of all TFs in the genie3 network
+TF <- as.data.frame(distinct(link.list, from.gene))
+TF$from.gene <- as.factor(TF$from.gene)
+
+```
+
+We can then carry this out for each TF family in the genome:
+
+```{r get all TF families}
+all_TF_families <- as.list(as.character(unique(TF_list$superfamily)))
+
+get_TF_graphs <- function(TF_family_name) {
+  print(TF_family_name)
+  ##subset the TFs based on family
+  Subset_TF <- TF_list %>% filter(superfamily %in% TF_family_name)
+
+  ##get the TFs from the genie3 list, and filter for those in Subset_TF
+  TF_allfam <- TF %>% filter(from.gene %in% Subset_TF$locus)
+  TF_allfam <- TF_allfam[,"from.gene"]
+  
+  ##calculate the number of replicates to do, given the number of genes in the superfamily
+  ##if replace is false, can do n choose k i.e. for n samples, choose 2, and store the pair so that only unique pairs are chosen
+  
+  num_repeats <- choose(length(TF_allfam),2)
+  print(num_repeats)
+  if(num_repeats == 0){
+    print(paste0("No genes in ",TF_family_name," in Genie3 list."))
+    return()
+  }
+  num_repeats <- ifelse(num_repeats > 1000, 1000, num_repeats)
+  
+  pair_dataframe <- data.frame(output=as.character(), stringsAsFactors = FALSE)
+  
+  ratios_output <- data.frame(ratio_col=as.numeric, stringsAsFactors = FALSE)
+  
+  #num_repeats <- 5
+  
+  while(nrow(pair_dataframe) < (num_repeats)){
+    if(length(TF_allfam) > 2){
+          pair <- sample(TF_allfam,2,replace=FALSE)
+          pair_string <- data.frame(as.character(paste(pair[1],pair[2])), stringsAsFactors = FALSE)
+          colnames(pair_string) <- c("output")
+          print(paste0("current pair:",pair_string$output))
+          if(pair_string$output %in% pair_dataframe$output){
+            print("already in")
+            next()
+          }
+          ##store pairs
+          pair_dataframe <- rbind(pair_dataframe, pair_string)
+          print(paste0("pairs considered:",nrow(pair_dataframe)))
+    }
+    else{
+      print("Too few TFs in subset")
+      return()
+    }
+    
+    ##get all downstream genes
+    gene1 <- link.list %>% filter(from.gene==pair[1])
+    gene2 <- link.list %>% filter(from.gene==pair[2])
+    
+    ##get number of downstream genes
+    num_gene1 <- nrow(gene1)
+    num_gene2 <- nrow(gene2)
+    
+    ##get number of shared genes
+    shared <- length(intersect(gene1[,"to.gene"], gene2[,"to.gene"]))
+    
+    ##get ratio
+    if(num_gene1 < num_gene2 || num_gene1 == num_gene2){
+      ratio <- shared/num_gene1
+    } else if(num_gene2 < num_gene1){
+      ratio <- shared/num_gene2
+    }
+    ratio <- data.frame(ratio_col=as.numeric(ratio))
+    
+    ratios_output <- rbind(ratios_output, ratio)
+  }
+  
+  #return(ratios_output)
+  output_allTF <- as.data.frame(ratios_output)
+  
+  summary_allTF <- summary(output_allTF$ratio_col)
+  return(list("summary" = summary_allTF, "output" = output_allTF, "TFfamily" = TF_family_name, "pairs" = pair_dataframe, "size family" = length(TF_allfam)))
+}
+
+##define a function to analyse the data for each family:
+all_families <- lapply(all_TF_families, get_TF_graphs)
+
+##save 
+saveRDS(all_families, "Y://Sophie/Networks/Genie3_Statistics_R/AllTFFamilies_data.rds")
+all_families <- readRDS("Y://Sophie/Networks/Genie3_Statistics_R/AllTFFamilies_data.rds")
+
+```
+
+Having obtained the data for all of the families, we can now plot this data; This is as the data appears in Figure 3A (NAC and C2C2-Dof) and Supplementary Figure 2
+
+```{r tf graph v2}
+
+##get the ratios into a single dataframe with the TF_family as a variable
+
+##can access data frames as this:
+## all_families[[n]][2] to access the data for the Nth list number
+##now iterate over all of the files
+
+
+get_df <- function(i){
+  tf_fams <- as.data.frame(c(all_families[][[i]]$output,all_families[][[i]]$TFfamily,all_families[][[i]]$`size family`))
+  colnames(tf_fams) <- c("Ratio","TF.Family","Size")
+  tf_fams$label <- paste0(tf_fams$TF.Family, ": ", tf_fams$Size)
+  return(tf_fams)
+}
+
+nums <- as.list(c(1:33,35,37:58))
+tf_fams <- lapply(nums, get_df)
+
+tf_fams <- bind_rows(tf_fams)
+tf_fams$TF.Family <- as.factor(tf_fams$TF.Family)
+
+annotation_df <- data.frame(xlab = c(0.5), ylab = c(0.8), lab=as.character(unique(tf_fams$label)), TF.Family=unique(tf_fams$TF.Family))
+
+library(lemon)
+
+all <- ggplot(data=tf_fams, aes(x=Ratio, y=..scaled..)) +
+  geom_density(fill=c("darkorchid3"), alpha=0.7) + theme_minimal() + xlab("Ratio") + facet_wrap(~TF.Family) + 
+  ylab("Density") + xlim(0,1) + theme(strip.text.x = element_blank()) + coord_capped_cart(bottom="both",left="both") +
+  geom_label(data=annotation_df, aes(x = xlab, y=ylab, label=lab), size=3) 
+
+all
+
+svg(filename="Z://Sophie/Manuscripts/Genie3/DraftFigures/AllTFFamilies_uniquepairs_scaled.svg",
+    width=15, height=15)
+all
+dev.off()
+
+```
+

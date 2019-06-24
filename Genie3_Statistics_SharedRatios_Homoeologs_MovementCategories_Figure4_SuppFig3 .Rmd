@@ -1,0 +1,506 @@
+---
+title: "Genie3 Homoeolog Analysis"
+author: "Sophie Harrington"
+date: "12 March 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(broom)
+
+library(ggpubr)
+```
+
+## R Markdown
+
+Now we can carry out an analysis of the shared genes between homoeologous triads
+
+We want to see, for each of the three pairwise comparisons possible, how many shared genes are present for homoeologs within a triad?
+
+To start with, we can just compare all homeoologs.
+
+```{r prep data}
+
+##the list of triads in the RefSeqv1.0 is available from:
+##https://opendata.earlham.ac.uk/wheat/under_license/toronto/Ramirez-Gonzalez_etal_2018-06025-Transcriptome-Landscape/data/TablesForExploration/Triads.rds
+
+triad_ids <- readRDS("Y:/expression_browser/WGA/data_tables/Triads.rds", refhook = FALSE)
+full_triads <- triad_ids[,c("group_id","gene")] %>% filter(!duplicated(gene))
+full_triads$gene <- as.character(full_triads$gene)
+
+##the GENIE 3 data is available from https://doi.ipk-gatersleben.de/DOI/53148abd-26a1-4ede-802b-c2635af6a725/ef7a50bf-54bb-4041-b922-4e60af47dd14/0/1847940088 
+load("Z:/Lab Organisation/Resources/Transcriptome_networks/for_multiple_networks/top_1_million_genie3.Rda")
+
+##get the TFs from the genie3 list
+TF <- as.data.frame(distinct(link.list, from.gene))
+TF <- TF[,"from.gene"]
+##get number of unique TFs in set
+length(TF)
+
+##only keep triads where all homoeologs are present in the genie3 data
+full_triads <- full_triads %>% filter(full_triads$gene %in% TF)
+full_triads <- full_triads[full_triads$group_id %in% names(which(table(full_triads$group_id)==3)),]
+nrow(full_triads)
+
+##get list of all TFs
+##available from https://opendata.earlham.ac.uk/wheat/under_license/toronto/Ramirez-Gonzalez_etal_2018-06025-Transcriptome-Landscape/data/data_tables/transcription_factors_to_use_high_confidence.csv
+TF_list <- read.csv("Z:/Lab Organisation/Resources/Transcriptome_networks/for_multiple_networks/TF_in_refseqv1.0.csv", header = TRUE)
+
+```
+
+We can carry out an initial comparison were we randomly select one triad, and select two homoeologs from that triad, and then obtain the distribution of shared downstream genes.
+
+```{r basic homoeolog comparison}
+
+##downstream genes available, for all of the triads (708 triads in total)
+hom_downstream <- function(triadnum){
+  ##randomly select one triad
+  id <- triadnum
+  triad <- as.data.frame(full_triads %>% filter(group_id == id))
+  homs <- triad[,"gene"]
+  ##sample two homoeologs
+  geneA <- grep("A01", homs, value=TRUE)
+  geneB <- grep("B01", homs, value=TRUE)
+  geneD <- grep("D01", homs, value=TRUE)
+  
+  ##get all downstream genes
+  gene1 <- link.list %>% filter(from.gene==geneA)
+  gene2 <- link.list %>% filter(from.gene==geneB)
+  gene3 <- link.list %>% filter(from.gene==geneD)
+  
+  ##get number of downstream genes
+  num_gene1 <- nrow(gene1)
+  num_gene2 <- nrow(gene2)
+  num_gene3 <- nrow(gene3)
+  smallest <- min(num_gene1, num_gene2, num_gene3)
+  
+  ##get number of shared genes8
+  sharedAB <- length(intersect(gene1[,"to.gene"], gene2[,"to.gene"]))
+  sharedAD <- length(intersect(gene1[,"to.gene"], gene3[,"to.gene"]))
+  sharedBD <- length(intersect(gene3[,"to.gene"], gene2[,"to.gene"]))
+  
+  ##get ratio
+  if(num_gene1 < num_gene2 || num_gene1 == num_gene2){
+    ratio_AB <- sharedAB/num_gene1
+  } else if(num_gene2 < num_gene1){
+    ratio_AB <- sharedAB/num_gene2
+  }
+    if(num_gene1 < num_gene3 || num_gene1 == num_gene3){
+    ratio_AD <- sharedAD/num_gene1
+  } else if(num_gene3 < num_gene1){
+    ratio_AD <- sharedAD/num_gene3
+  }
+    if(num_gene2 < num_gene3 || num_gene2 == num_gene3){
+    ratio_BD <- sharedBD/num_gene2
+  } else if(num_gene3 < num_gene2){
+    ratio_BD <- sharedBD/num_gene3
+  }
+  
+  ##also get a 3-way comparison ratio
+  sharedABD <- length(intersect(intersect(gene1[,"to.gene"], gene2[,"to.gene"]), gene3[,"to.gene"]))
+  ratio_ABD <- sharedABD/smallest
+  return(data.frame("AB"=ratio_AB,"AD"=ratio_AD,"BD"=ratio_BD,"ABD"=ratio_ABD,"Triad"=triadnum))
+  
+}
+
+output_rel <- lapply(unique(full_triads$group_id), hom_downstream)
+
+##output_first contains all of the individual pairwise comparisons between homoeologs
+output_first <- bind_rows(output_rel)
+
+output_AB <- as.data.frame(output_first$AB)
+colnames(output_AB) <- c("SharedGenes")
+output_AD <- as.data.frame(output_first$AD)
+colnames(output_AD) <- c("SharedGenes")
+output_BD <- as.data.frame(output_first$BD)
+colnames(output_BD) <- c("SharedGenes")
+
+##output_allcombined unites all pairwise comparisons into a single column
+output_allcombined <- rbind(output_AB, output_AD, output_BD)
+
+##save as 
+write.csv(output_allcombined, "Y://Sophie/Networks/Genie3_Statistics_R/Homoeolog_ratio_distributiondata.csv")
+output_allcombined <- read.csv("Y://Sophie/Networks/Genie3_Statistics_R/Homoeolog_ratio_distributiondata.csv")
+
+##get summary data
+summary(output_allcombined$SharedGenes)
+```
+We can then plot this as a distribution:
+
+```{r first plot, echo=FALSE}
+plot_homoeolog <- ggplot(output_allcombined, aes(x=output_allcombined$SharedGenes)) + geom_density(color="darkorchid3", fill="darkorchid3", alpha=0.5)   + xlim(0,1) + ylab("Density") + xlab("Ratio of Shared Genes to Downstream Genes") +
+  theme(axis.title = element_text(size=rel(1)))
+
+plot_homoeolog
+```
+
+It's clear that this distribution is substantially shifted from that observed when randomly sampling TFs that may or may not be homoeologs. This distribution is seen in Figure 3A.
+
+
+At the same time, we can now figure out how many genes tend to have the same genome downstream (i.e. are A genome transcription factors more likely to have A genome targets?)
+
+```{r get genome targets, warning=FALSE}
+
+##we need to pull out all of the downstream targets for each gene, and see how many have the same genome as that one.
+
+allTFs <- unique(link.list$from.gene) ##3384 in total
+
+getgenometargets <- function(TF){
+    
+  ##get how many match the genome of the TF in question
+  genome <- substr(TF, 9,11) ##returns e.g. A01
+  A_genome <- c("A01")
+  B_genome <- c("B01")
+  D_genome <- c("D01")
+  
+  if(!(TF %in% link.list$from.gene)){
+    return(data.frame("ratio"=NA,"Genome"=genome,"TF"=TF))}
+  
+  ##take the TF we have, and get all downstream genes
+  ds_genes <- link.list %>% filter(from.gene %in% TF)
+  
+
+  A_genome <- grep(A_genome, ds_genes$to.gene)
+  ratio_Agenome <- length(A_genome)/length(ds_genes$to.gene)
+  B_genome <- grep(B_genome, ds_genes$to.gene)
+  ratio_Bgenome <- length(B_genome)/length(ds_genes$to.gene)
+  D_genome <- grep(D_genome, ds_genes$to.gene)
+  ratio_Dgenome <- length(D_genome)/length(ds_genes$to.gene)
+  ##get percentage that are the same genome
+  
+  ##and also do for both other genomes
+  
+  return(data.frame("ratioA"=ratio_Agenome,"ratioB"=ratio_Bgenome,"ratioD"=ratio_Dgenome,"Genome"=genome,"TF"=TF))
+}
+
+shared_genome_targets <- lapply(allTFs, getgenometargets)
+
+shared_genome_targets_df <- bind_rows(shared_genome_targets)
+
+write.csv(shared_genome_targets_df, "Y://Sophie/Networks/Genie3_Statistics_R/shared_genome_targets_df.csv")
+shared_genome_targets_df <- read.csv("Y://Sophie/Networks/Genie3_Statistics_R/shared_genome_targets_df.csv")
+
+```
+
+Now we can take this data and plot it:
+
+```{r plot genome targets data}
+
+sharedgenome_tidy <- gather(shared_genome_targets_df, variable, value, -Genome, -TF, -X)
+
+plot_sharedgenome <- ggplot(sharedgenome_tidy, aes(x=value, fill=variable)) + geom_density(alpha=0.2) + xlim(0,1) + ylab("Density") + xlab("Ratio of Shared Genes to Downstream Genes") +
+  theme(axis.title = element_text(size=rel(1))) + facet_wrap(~Genome)
+
+##also do tandem violin plots
+plot_violin_sharedgenome <- ggplot(sharedgenome_tidy, aes(y=value, x = variable, fill=variable)) + geom_violin(alpha=0.7) + ylab("Ratio of Downstream Genes from each Genome") + xlab("Ratio of Shared Genes to Downstream Genes") +
+  theme(axis.title = element_text(size=rel(1))) + facet_wrap(~Genome)
+###note that the "01G" are all the chromosome U TFs.
+
+plot_sharedgenome
+plot_violin_sharedgenome
+
+```
+
+After plotting the distributions, it doesn't look like there's any sort of link between the genome of the TF and the relative proportion of downstream targets on either genome. We can test this statistically. This data is presented in Figure 4B.
+
+Use Kolmogorov-Smirnov tests to compare two distributions
+
+```{r KS tests, warning=FALSE}
+
+kstest <- function(genome){
+  ##do the three pairwise comparisons for each genome
+  AB <- subset(shared_genome_targets_df, Genome %in% genome) %>% ks.test(.$ratioA, .$ratioB, exact=FALSE, data=.) %>% tidy(.)
+  AD <- subset(shared_genome_targets_df, Genome %in% genome) %>% ks.test(.$ratioA, .$ratioD, exact=FALSE, data=.) %>% tidy(.)
+  BD <- subset(shared_genome_targets_df, Genome %in% genome) %>% ks.test(.$ratioB, .$ratioD, exact=FALSE, data=.) %>% tidy(.)
+  output <- rbind(AB, AD, BD)
+  output$combo <- c("AB","AD","BD")
+  output$Genome <- genome
+  return(output)
+}
+
+genome_ks_comparison <- lapply(c("A01","B01","D01","01G"),kstest)
+
+genome_ks_comparison <- bind_rows(genome_ks_comparison)
+
+##was going to do BH adjust, but n >= lp is not true!
+genome_ks_comparison$p.value.BHadjust <- p.adjust(genome_ks_comparison$p.value, method="BH")
+
+print.data.frame(genome_ks_comparison)
+
+```
+
+If we carry out the 9 required pairwise tests, and then adjust the p-value using the BH/false discovery rate adjustment, we can see that some of the comparisons suggest the distributions are significantly different. For example, the A-D comparison for TFs on the A genome is highly significant (p < 0.001), while the B-D comparison is also significant (p < 0.01). However, comparing this to the distributions we see in the plots above, it's very difficult to see the difference that is being reflected in the statistics. It seems that there are only very small differences if at all. 
+
+We can now get the good pub quality graph of this:
+``` {r graph genome preferences}
+##just take the A/B/D genomes
+
+subset_df <- subset(sharedgenome_tidy, Genome %in% c("A01","B01","D01"))
+
+genome.colors = c("ratioA"="#579D1C", "ratioB"="#4B1F6F", "ratioD"="#FF950E")
+first.genome.colors = c("A01"="#579D1C", "B01"="#4B1F6F", "D01"="#FF950E")
+ 
+facet_labels <- c("A genome TF","B genome TF","D genome TF")
+names(facet_labels) <- c("A01","B01","D01")
+
+plot_violin_sharedgenome <- ggplot(subset_df, aes(y=value, x = variable, fill=variable)) + geom_violin(alpha=0.7) + ylab("Ratio of Target Genes from each Genome") + xlab(element_blank()) + theme_minimal() +
+  theme(axis.title = element_text(size=rel(1)), axis.text.x = element_blank(), axis.ticks.x = element_blank()) + 
+  facet_wrap(~Genome, labeller = labeller(Genome=facet_labels)) +  
+  scale_fill_manual(values=genome.colors, labels=c("A genome","B genome","D genome"), name=c("Target \nGenome")) 
+
+plot_violin_sharedgenome
+
+svg("Z://Sophie/Manuscripts/Genie3/DraftFigures/Downstream_genome_preferences.svg",width=6, height=4)
+plot_violin_sharedgenome
+dev.off()
+
+plot_box_sharedgenome <- ggplot(subset_df, aes(y=value, x = variable, fill=variable)) + geom_boxplot(alpha=0.7) + ylab("Ratio of Target Genes from each Genome") + xlab(element_blank()) + theme_minimal() +
+  theme(axis.title = element_text(size=rel(1)), axis.text.x = element_blank(), axis.ticks.x = element_blank()) + 
+  facet_wrap(~Genome, labeller = labeller(Genome=facet_labels)) +  
+  scale_fill_manual(values=genome.colors, labels=c("A genome","B genome","D genome"), name=c("Target \nGenome")) 
+
+plot_box_sharedgenome
+
+svg("Z://Sophie/Manuscripts/Genie3/DraftFigures/Downstream_genome_preferences_boxplot.svg",width=6, height=4)
+plot_box_sharedgenome
+dev.off()
+
+##
+
+```
+
+
+
+
+We can also integrate this data with what we know about the dynamic/stable triads. I.e. are dynamic triads less likely to share the same targets amongst homoeologs?
+
+```{r dynamism, warnings=FALSE}
+
+##all lists of genes associated with movement categories are available from:
+## https://opendata.earlham.ac.uk/wheat/under_license/toronto/Ramirez-Gonzalez_etal_2018-06025-Transcriptome-Landscape/data/Triad_Subsets_Movement/
+
+top_10_genes <- read.csv("Y:/expression_browser/dataset_reports/20170911_all_reports/02.movement/HC_CS_no_stress/HC_CS_no_stress_movement_top_10pc.txt")
+low_10_genes <- read.csv("Y:/expression_browser/dataset_reports/20170911_all_reports/02.movement/HC_CS_no_stress/HC_CS_no_stress_movement_low_10pc.txt")
+mid_80_genes <- read.csv("y:/expression_browser/dataset_reports/20170911_all_reports/02.movement/HC_CS_no_stress/HC_CS_no_stress_movement_middle_80pc.txt")
+
+top_10_genes$movement <- c("Dynamic")
+low_10_genes$movement <- c("Stable")
+mid_80_genes$movement <- c("Mid 80")
+
+movement_categories <- bind_rows(top_10_genes, low_10_genes, mid_80_genes)
+colnames(movement_categories) <- c("gene","Movement")
+
+##merge with triad numbers as well
+shared_genome_targets_movement <- merge(movement_categories,triad_ids[,c("group_id","gene")], by = c("gene"))
+shared_genome_targets_movement <- unique(shared_genome_targets_movement)
+colnames(shared_genome_targets_movement) <- c("Gene", "Movement","Triad")
+shared_genome_targets_movement <- unique(shared_genome_targets_movement[,c("Movement","Triad")])
+
+##merge with the homoeolog data output
+homoeolog_dstargets_movement <- merge(shared_genome_targets_movement, output_first, by=c("Triad"))
+nrow(subset(homoeolog_dstargets_movement, Movement %in% c("Stable")))
+nrow(subset(homoeolog_dstargets_movement, Movement %in% c("Mid 80")))
+nrow(subset(homoeolog_dstargets_movement, Movement %in% c("Dynamic")))
+
+hommovement_tidy <- gather(homoeolog_dstargets_movement, variable, value, -Triad, -Movement)
+
+
+summary(subset(hommovement_tidy, !(variable %in% c("ABD")) & Movement%in% c("Stable"))$value)
+summary(subset(hommovement_tidy, !(variable %in% c("ABD")) & Movement%in% c("Mid 80"))$value)
+summary(subset(hommovement_tidy, !(variable %in% c("ABD")) & Movement%in% c("Dynamic"))$value)
+
+nrow(subset(hommovement_tidy, !(variable %in% c("ABD")) & Movement%in% c("Stable")))
+
+```
+
+Now we have the shared ds targets for homoeolog pairs within each triad aligned with the triad movement category. Of the 708 triads we obtained homoeolog data for initially, 626 are retained after this step here.
+
+Now we can see if dynamic triads have less overlap between the homoeologs
+
+```{r homoeolog movement overlap}
+
+
+plot_violin_movement <- ggplot(hommovement_tidy, aes(y=value, x = variable, fill=Movement)) + geom_violin(alpha=0.5) + ylab("Density") + xlab("Ratio of Shared Genes to Downstream Genes") +
+  theme(axis.title = element_text(size=rel(1)))
+
+plot_violin_movement
+
+```
+
+At first glance, it looks like there might be a small trend for stable triads to share slightly more downstream genes than the dynamic triads; but we need to run the stats using the KS test
+
+```{r ks test for homoeolog movement bias, warning=FALSE}
+
+##for each pair of genomes or ABD comparison, do KS for the 3 pairwise movement comparisons
+
+kstest_hommovement <- function(genomes){
+  ##do the three pairwise comparisons for each genome
+  StableMid80 <- subset(hommovement_tidy, variable %in% genomes) %>% ks.test(subset(.,Movement == c("Stable"))$value, subset(.,Movement == c("Mid 80"))$value, exact=FALSE, data=.) %>% tidy(.)
+  StableDynamic <- subset(hommovement_tidy, variable %in% genomes) %>% ks.test(subset(.,Movement == c("Stable"))$value, subset(.,Movement == c("Dynamic"))$value, exact=FALSE, data=.) %>% tidy(.)
+  Mid80Dynamic <- subset(hommovement_tidy, variable %in% genomes) %>% ks.test(subset(.,Movement == c("Mid 80"))$value, subset(.,Movement == c("Dynamic"))$value, exact=FALSE, data=.) %>% tidy(.)
+  output <- rbind(StableMid80, StableDynamic, Mid80Dynamic)
+  output$combo <- c("Stable-Mid80","Stable-Dynamic","Mid80-Dynamic")
+  output$Genome <- genomes
+  return(output)
+}
+
+genome_ks_hommovementcomparison <- lapply(c("AB","AD","BD","ABD"),kstest_hommovement)
+
+genome_ks_hommovementcomparison <- bind_rows(genome_ks_hommovementcomparison)
+
+###attach multiple comparisons adjusted p-value
+## use the BH or fdr adjustment
+genome_ks_hommovementcomparison$p.value.BHadjust <- p.adjust(genome_ks_hommovementcomparison$p.value, method="BH")
+
+print.data.frame(genome_ks_hommovementcomparison)
+
+
+```
+
+Following the KS test, we cannot find any significant difference in how many targets are shared between homoeologs depending on whether the triad is stable, mid80, or dynamic.
+
+What if we combine the pairwise data?
+
+```{r pool all for movement}
+
+
+
+plot_box_movement <- ggplot(subset(hommovement_tidy, !(variable %in% c("ABD"))), aes(y=value, x = Movement, fill=Movement)) + geom_boxplot(alpha=0.5) + ylab("Density") + xlab("Ratio of Shared Genes to Downstream Genes") +
+  theme(axis.title = element_text(size=rel(1)))
+
+
+plot_box_movement
+
+```
+
+These do look clearly skewed towards 0 for the dynamic triads. Now see if that is statistically borne out:
+
+```{r stats on combined movement, warning=FALSE}
+
+StableMid80 <- subset(hommovement_tidy, !(variable %in% c("ABD")))%>% ks.test(subset(.,Movement == c("Stable"))$value, subset(.,Movement == c("Mid 80"))$value, exact=FALSE, data=.) %>% tidy(.)
+StableDynamic <- subset(hommovement_tidy, !(variable %in% c("ABD")))%>% ks.test(subset(.,Movement == c("Stable"))$value, subset(.,Movement == c("Dynamic"))$value, exact=FALSE, data=.) %>% tidy(.)
+Mid80Dynamic <- subset(hommovement_tidy, !(variable %in% c("ABD")))%>% ks.test(subset(.,Movement == c("Mid 80"))$value, subset(.,Movement == c("Dynamic"))$value, exact=FALSE, data=.) %>% tidy(.)
+genome_ks_combo <- rbind(StableMid80, StableDynamic, Mid80Dynamic)
+genome_ks_combo$combo <- c("Stable-Mid80","Stable-Dynamic","Mid80-Dynamic")
+
+###attach multiple comparisons adjusted p-value
+## use the BH or fdr adjustment
+genome_ks_combo$p.value.BHadjust <- p.adjust(genome_ks_combo$p.value, method="BH")
+
+print.data.frame(genome_ks_combo)
+```
+Only the stable/dynamic comparison is significant (ignore the BH adjust, as only 3 comparisons done!)
+
+We can now make the publication quality image:
+```{r pub image for dynamic/stable}
+
+hommovement_tidy$Movement <- as.factor(hommovement_tidy$Movement)
+movement.colors = c("Dynamic"="#e41a1c", "Mid 80"="#bdbdbd", "Stable"="#377eb8")
+
+library(ggpubr)
+do_comparisons <- list(c("Dynamic","Mid 80"),c("Stable","Mid 80"),c("Dynamic","Stable"))
+
+plot_box_movement <- ggplot(subset(hommovement_tidy, !(variable %in% c("ABD"))) , aes(y=value, fill=Movement, x=Movement)) + 
+  geom_boxplot(alpha=1) + theme_minimal() + xlab("Movement") +ylab("Ratio") +
+  theme(axis.title = element_text(size=rel(1))) +scale_fill_manual(values=movement.colors) + stat_compare_means(comparisons = do_comparisons, size=rel(4)) + theme(legend.position = "none")
+
+plot_box_movement
+
+##this has stats using wilcox test for pairwise comparisons
+
+svg("Z://Sophie/Manuscripts/Genie3/DraftFigures/Movement_Boxplots_withstats.svg", width=4, height=4)
+plot_box_movement
+dev.off()
+
+
+```
+
+This graph is presented as Figure 4A.
+
+We can also see to what extent the ratio of DS genes for each genmoe is affected by the movement category (i.e. are stable TFs on the A genome more likely to have DS A genome targets than dynamic A genome TFs?)
+
+```{r plot movement, fig.cap="Shared genes by movement category"}
+
+##assign a category to each TF
+mov_cat <- movement_categories
+colnames(mov_cat) <- c("TF","Movement")
+shared_genome_targets_movement <- merge(shared_genome_targets_df, mov_cat, by = c("TF"))
+
+sharedmovement_tidy <- gather(shared_genome_targets_movement, variable, value, -Genome, -TF, -Movement)
+
+plot_violin_movement <- ggplot(sharedmovement_tidy, aes(y=value, x = variable, fill=variable)) + geom_violin(alpha=0.5) + ylab("Density") + xlab("Ratio of Shared Genes to Downstream Genes") +
+  theme(axis.title = element_text(size=rel(1))) + facet_wrap(~Genome + Movement)
+
+plot_violin_movement
+
+```
+If we look at the plots here, there does seem to be more variation in the distribution shapes than we saw for the genome samples above. 
+
+```{r kolmogorov-smirnov test, warning=FALSE}
+
+movement_df <- expand.grid(c("A01","B01","D01"),c("Stable","Mid 80","Dynamic"))
+
+kstest_movement <- function(genome, movement){
+  ##do the three pairwise comparisons for each genome
+  AB <- subset(shared_genome_targets_movement, Genome %in% genome & Movement %in% movement) %>% ks.test(.$ratioA, .$ratioB, exact=FALSE, data=.) %>% tidy(.)
+  AD <- subset(shared_genome_targets_movement, Genome %in% genome & Movement %in% movement) %>% ks.test(.$ratioA, .$ratioD, exact=FALSE, data=.) %>% tidy(.)
+  BD <- subset(shared_genome_targets_movement, Genome %in% genome & Movement %in% movement) %>% ks.test(.$ratioB, .$ratioD, exact=FALSE, data=.) %>% tidy(.)
+  output <- rbind(AB, AD, BD)
+  output$combo <- c("AB","AD","BD")
+  output$Genome <- genome
+  output$Movement <- movement
+  return(output)
+}
+
+genome_ks_movementcomparison <- mapply(kstest_movement, genome=movement_df[,1], movement=movement_df[,2], SIMPLIFY = FALSE)
+
+genome_ks_movementcomparison <- bind_rows(genome_ks_movementcomparison)
+
+###attach multiple comparisons adjusted p-value
+## use the BH or fdr adjustment
+genome_ks_movementcomparison$p.value.BHadjust <- p.adjust(genome_ks_movementcomparison$p.value, method="BH")
+
+print.data.frame(genome_ks_movementcomparison)
+
+```
+
+Following the KS tests, and then the adjustment of the p-values with the BH adjustment, we can see that very few have any significant difference in distribution.
+
+
+And now we can make a nice publication image:
+
+```{r pub subset movement genome}
+subset_df <- subset(sharedmovement_tidy, Genome %in% c("A01","B01","D01"))
+
+genome.colors = c("ratioA"="#579D1C", "ratioB"="#4B1F6F", "ratioD"="#FF950E")
+first.genome.colors = c("A01"="#579D1C", "B01"="#4B1F6F", "D01"="#FF950E")
+movement.colors = c("Dynamic"="#e41a1c", "Mid 80"="#bdbdbd", "Stable"="#377eb8")
+
+facet_labels <- c("A genome","B genome","D genome")
+names(facet_labels) <- c("A01","B01","D01")
+
+do_comparisons <- list(c("ratioA","ratioB"),c("ratioA","ratioD"),c("ratioB","ratioD"))
+
+plot_violin_movement <- ggplot(sharedmovement_tidy, aes(y=value, x = variable, fill=variable)) + geom_violin(alpha=0.7) + 
+  ylab("Ratio of Downstream Genes from each Genome") +xlab(element_blank()) + theme_minimal() + ylim(0,1) + 
+  theme(axis.title = element_text(size=rel(1)), axis.text.x = element_blank(), axis.ticks.x = element_blank()) +
+  facet_wrap(~Movement+Genome, labeller = labeller(Genome=facet_labels)) +
+  scale_fill_manual(values=genome.colors, labels=c("A genome","B genome","D genome"), name=c("Downstream \nGenome")) +
+  stat_compare_means(comparisons = do_comparisons, size=rel(2))
+  
+
+
+plot_violin_movement
+
+svg(filename = "Z://Sophie/Manuscripts/Genie3/DraftFigures/Movement_Genome_violinplots.svg", width=6, height=6)
+plot_violin_movement
+dev.off()
+
+```
+
+This graph is presented as Supplementary Figure 3.
+
