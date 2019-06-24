@@ -401,7 +401,6 @@ We can now make the publication quality image:
 hommovement_tidy$Movement <- as.factor(hommovement_tidy$Movement)
 movement.colors = c("Dynamic"="#e41a1c", "Mid 80"="#bdbdbd", "Stable"="#377eb8")
 
-library(ggpubr)
 do_comparisons <- list(c("Dynamic","Mid 80"),c("Stable","Mid 80"),c("Dynamic","Stable"))
 
 plot_box_movement <- ggplot(subset(hommovement_tidy, !(variable %in% c("ABD"))) , aes(y=value, fill=Movement, x=Movement)) + 
@@ -492,8 +491,6 @@ plot_violin_movement <- ggplot(sharedmovement_tidy, aes(y=value, x = variable, f
   scale_fill_manual(values=genome.colors, labels=c("A genome","B genome","D genome"), name=c("Downstream \nGenome")) +
   stat_compare_means(comparisons = do_comparisons, size=rel(2))
   
-
-
 plot_violin_movement
 
 svg(filename = "Z://Sophie/Manuscripts/Genie3/DraftFigures/Movement_Genome_violinplots.svg", width=6, height=6)
