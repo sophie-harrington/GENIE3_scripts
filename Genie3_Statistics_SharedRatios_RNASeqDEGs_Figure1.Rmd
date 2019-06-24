@@ -126,6 +126,17 @@ svg(filename = "Z://Sophie/Manuscripts/Genie3/DraftFigures/PearceRandomDist.svg"
 plot_homoeolog
 dev.off()
 
+
+##and also plot with shorter x-axis, to make distribution clearer.
+annotation_df_0.25 <- data.frame(xlab = c(12/79, 4/79), x1 = c(12/79, 4/79), ylab=c(30,50), y1 = c(25,40), y2=c(0,0), lab=c("12/79","4/79"), RNA_Dataset=c("NAMA1_vsWT_12DAANF","NAMA1_vsWT_22DAA"))
+
+plot_homoeolog_0.25 <- ggplot(output_12_22, aes(x=Ratio)) + geom_density(fill="darkorchid3", alpha=0.7) + xlim(0,0.25) + ylab("Density") +   xlab("Ratio") + theme_minimal() + theme(axis.title = element_text(size=rel(1)), axis.text.x = element_text(size=rel(0.7)), axis.text.y = element_text(size=rel(0.7))) + facet_wrap(~RNA_Dataset, ncol=1, labeller=labeller(RNA_Dataset=plot.labels), scales="free") + geom_text(data=annotation_df_0.25, aes(x = xlab, y =ylab, label=lab), size=3) + geom_segment(data=annotation_df, aes(x=x1, xend=x1, y=y1, yend=y2), colour="black")
+
+plot_homoeolog_0.25
+
+svg(filename = "Z://Sophie/Manuscripts/Genie3/DraftFigures/PearceRandomDist_x0.25.svg",width=2, height=4)
+plot_homoeolog_0.25
+dev.off()
 ```
 
 Do the sign test for stats:
